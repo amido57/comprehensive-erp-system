@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: erp_app
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_DATABASE=erp_system
+      - DB_USERNAME=erp_user
+      - DB_PASSWORD=erp_password
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend:/app
+    networks:
+      - erp_network
+
+  db:
+    image: mysql:8.0
+    container_name: erp_db
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_DATABASE=erp_system
+      - MYSQL_USER=erp_user
+      - MYSQL_PASSWORD=erp_password
+      - MYSQL_ROOT_PASSWORD=root_password
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - erp_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: erp_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - erp_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: erp_frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - app
+    volumes:
+      - ./frontend:/app
+    networks:
+      - erp_network
+
+  nginx:
+    image: nginx:alpine
+    container_name: erp_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - app
+      - frontend
+    networks:
+      - erp_network
+
+volumes:
+  db_data:
+
+networks:
+  erp_network:
+    driver: bridge
