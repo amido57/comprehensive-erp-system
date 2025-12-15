@@ -1,253 +1,261 @@
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+from datetime import datetime, timedelta
 import os
-from datetime import datetime
 import json
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///erp.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')
 
-# Sample data storage (in-memory database)
-data_store = {
-    'transactions': [
-        {'id': 1, 'date': '2025-12-01', 'description': 'Invoice #001', 'amount': 5000, 'type': 'income'},
-        {'id': 2, 'date': '2025-12-02', 'description': 'Payment', 'amount': 2000, 'type': 'expense'},
-        {'id': 3, 'date': '2025-12-03', 'description': 'Invoice #002', 'amount': 7500, 'type': 'income'},
-    ],
-    'inventory': [
-        {'id': 1, 'product': 'Product A', 'quantity': 100, 'price': 50},
-        {'id': 2, 'product': 'Product B', 'quantity': 75, 'price': 120},
-        {'id': 3, 'product': 'Product C', 'quantity': 200, 'price': 25},
-    ],
-    'employees': [
-        {'id': 1, 'name': 'Ahmed Hassan', 'position': 'Manager', 'salary': 5000},
-        {'id': 2, 'name': 'Fatima Ahmed', 'position': 'Accountant', 'salary': 3500},
-        {'id': 3, 'name': 'Mohammed Ali', 'position': 'Sales', 'salary': 3000},
-    ],
-    'sales': [
-        {'id': 1, 'date': '2025-12-01', 'customer': 'Company A', 'amount': 5000, 'items': 5},
-        {'id': 2, 'date': '2025-12-02', 'customer': 'Company B', 'amount': 3200, 'items': 8},
-        {'id': 3, 'date': '2025-12-03', 'customer': 'Company C', 'amount': 7500, 'items': 12},
-    ],
-}
+db = SQLAlchemy(app)
 
-DASHBOARD_TEMPLATE = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comprehensive ERP System</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: Segoe UI, Tahoma, Geneva, Verdana, sans-serif; background: #f5f7fa; }
-        header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        header h1 { font-size: 28px; margin-bottom: 5px; }
-        header p { opacity: 0.9; }
-        .container { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
-        .status-bar { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: flex; justify-content: space-around; flex-wrap: wrap; gap: 20px; }
-        .status-item { text-align: center; }
-        .status-label { color: #666; font-size: 14px; margin-bottom: 5px; }
-        .status-value { font-size: 24px; font-weight: bold; color: #667eea; }
-        .modules { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .module { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); transition: all 0.3s; border-left: 5px solid #667eea; cursor: pointer; }
-        .module:hover { transform: translateY(-5px); box-shadow: 0 5px 15px rgba(0,0,0,0.15); }
-        .module h3 { color: #667eea; margin-bottom: 10px; font-size: 20px; }
-        .module p { color: #666; font-size: 14px; margin-bottom: 15px; }
-        .module button { background: #667eea; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; width: 100%; }
-        .module button:hover { background: #764ba2; }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .stat-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .stat-card .label { color: #666; font-size: 14px; margin-bottom: 5px; }
-        .stat-card .value { font-size: 28px; font-weight: bold; color: #667eea; }
-        .data-table { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; }
-        th { background: #f8f9fa; padding: 12px; text-align: left; color: #333; border-bottom: 2px solid #667eea; }
-        td { padding: 12px; border-bottom: 1px solid #eee; }
-        tr:hover { background: #f8f9fa; }
-        footer { text-align: center; padding: 20px; color: #666; margin-top: 30px; }
-        .section-title { font-size: 20px; font-weight: bold; color: #333; margin: 30px 0 15px; }
-    </style>
-</head>
-<body>
-    <header>
-        <h1>🚀 Comprehensive ERP System</h1>
-        <p>Manage all your business operations in one place</p>
-    </header>
+# ============= DATABASE MODELS =============
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(20), default='viewer')  # admin, accountant, sales, store_manager, hr, viewer
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Product(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    sku = db.Column(db.String(50), unique=True, nullable=False)
+    category = db.Column(db.String(100))
+    unit_price = db.Column(db.Float, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Warehouse(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    location = db.Column(db.String(255))
+    is_active = db.Column(db.Boolean, default=True)
+
+class StockMovement(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    warehouse_id = db.Column(db.Integer, db.ForeignKey('warehouse.id'), nullable=False)
+    movement_type = db.Column(db.String(20))  # in, out, transfer
+    quantity = db.Column(db.Float, nullable=False)
+    reference_id = db.Column(db.String(50))  # PO, SO, etc
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    product = db.relationship('Product')
+    warehouse = db.relationship('Warehouse')
+
+class Supplier(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(120))
+    phone = db.Column(db.String(20))
+    address = db.Column(db.String(255))
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class PurchaseOrder(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    po_number = db.Column(db.String(50), unique=True, nullable=False)
+    supplier_id = db.Column(db.Integer, db.ForeignKey('supplier.id'), nullable=False)
+    status = db.Column(db.String(20), default='draft')  # draft, confirmed, received, invoiced
+    total_amount = db.Column(db.Float, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    supplier = db.relationship('Supplier')
+    creator = db.relationship('User')
+
+class PurchaseOrderItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    po_id = db.Column(db.Integer, db.ForeignKey('purchase_order.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    quantity = db.Column(db.Float, nullable=False)
+    unit_price = db.Column(db.Float, nullable=False)
+    line_total = db.Column(db.Float)
+    po = db.relationship('PurchaseOrder')
+    product = db.relationship('Product')
+
+class SalesOrder(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    so_number = db.Column(db.String(50), unique=True, nullable=False)
+    customer_name = db.Column(db.String(255), nullable=False)
+    customer_email = db.Column(db.String(120))
+    status = db.Column(db.String(20), default='draft')  # draft, confirmed, invoiced, paid
+    total_amount = db.Column(db.Float, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    creator = db.relationship('User')
+
+class SalesOrderItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    so_id = db.Column(db.Integer, db.ForeignKey('sales_order.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    quantity = db.Column(db.Float, nullable=False)
+    unit_price = db.Column(db.Float, nullable=False)
+    line_total = db.Column(db.Float)
+    so = db.relationship('SalesOrder')
+    product = db.relationship('Product')
+
+class ChartOfAccount(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(20), unique=True, nullable=False)
+    name = db.Column(db.String(255), nullable=False)
+    account_type = db.Column(db.String(20))  # asset, liability, equity, revenue, expense
+    balance = db.Column(db.Float, default=0)
+
+class JournalEntry(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    entry_date = db.Column(db.DateTime, default=datetime.utcnow)
+    description = db.Column(db.String(255))
+    reference_type = db.Column(db.String(20))  # PO, SO, manual
+    reference_id = db.Column(db.String(50))
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    creator = db.relationship('User')
+
+class JournalEntryLine(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    je_id = db.Column(db.Integer, db.ForeignKey('journal_entry.id'), nullable=False)
+    account_id = db.Column(db.Integer, db.ForeignKey('chart_of_account.id'), nullable=False)
+    debit = db.Column(db.Float, default=0)
+    credit = db.Column(db.Float, default=0)
+    je = db.relationship('JournalEntry')
+    account = db.relationship('ChartOfAccount')
+
+class AuditLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    action = db.Column(db.String(255))
+    module = db.Column(db.String(50))
+    record_id = db.Column(db.String(50))
+    old_value = db.Column(db.Text)
+    new_value = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    user = db.relationship('User')
+
+# ============= AUTHENTICATION =============
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def role_required(role):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if 'user_id' not in session:
+                return redirect(url_for('login'))
+            user = User.query.get(session['user_id'])
+            if not user or user.role != role:
+                return jsonify({'error': 'Unauthorized'}), 403
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+# ============= ROUTES =============
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user = User.query.filter_by(username=username).first()
+        
+        if user and check_password_hash(user.password, password) and user.is_active:
+            session['user_id'] = user.id
+            session['username'] = user.username
+            session['role'] = user.role
+            return redirect(url_for('dashboard'))
+        else:
+            return 'Invalid credentials', 401
     
-    <div class="container">
-        <div class="status-bar">
-            <div class="status-item">
-                <div class="status-label">System Status</div>
-                <div class="status-value">✓ Online</div>
-            </div>
-            <div class="status-item">
-                <div class="status-label">Version</div>
-                <div class="status-value">2.0</div>
-            </div>
-            <div class="status-item">
-                <div class="status-label">Last Updated</div>
-                <div class="status-value">{{ timestamp }}</div>
-            </div>
-        </div>
-        
-        <div class="stats">
-            <div class="stat-card">
-                <div class="label">Total Revenue</div>
-                <div class="value" id="total-revenue">15,700 ر.س</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">Inventory Items</div>
-                <div class="value" id="inventory-count">375</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">Total Employees</div>
-                <div class="value" id="employees-count">3</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">Active Sales</div>
-                <div class="value" id="sales-count">3</div>
-            </div>
-        </div>
-        
-        <div class="section-title">📊 ERP Modules</div>
-        <div class="modules">
-            <div class="module">
-                <h3>📈 Accounting</h3>
-                <p>Manage financial transactions and reports</p>
-                <button onclick="loadModule('accounting')">Open Accounting</button>
-            </div>
-            <div class="module">
-                <h3>📦 Inventory</h3>
-                <p>Track and manage product inventory</p>
-                <button onclick="loadModule('inventory')">Open Inventory</button>
-            </div>
-            <div class="module">
-                <h3>👥 HR Management</h3>
-                <p>Manage employees and payroll</p>
-                <button onclick="loadModule('hr')">Open HR</button>
-            </div>
-            <div class="module">
-                <h3>💼 Sales & CRM</h3>
-                <p>Track sales and customer relationships</p>
-                <button onclick="loadModule('sales')">Open Sales</button>
-            </div>
-            <div class="module">
-                <h3>📊 Reports</h3>
-                <p>View comprehensive business reports</p>
-                <button onclick="loadModule('reports')">View Reports</button>
-            </div>
-            <div class="module">
-                <h3>⚙️ Settings</h3>
-                <p>Configure system settings</p>
-                <button onclick="loadModule('settings')">Go to Settings</button>
-            </div>
-        </div>
-        
-        <div class="section-title">📋 Recent Transactions</div>
-        <div class="data-table">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>Description</th>
-                        <th>Amount</th>
-                        <th>Type</th>
-                    </tr>
-                </thead>
-                <tbody id="transactions-table">
-                    <!-- Loaded dynamically -->
-                </tbody>
-            </table>
-        </div>
-    </div>
-    
-    <footer>
-        <p>Comprehensive ERP System v2.0 | Built with Flask | Deployed on Railway | Bilingual Support</p>
-    </footer>
-    
-    <script>
-        function loadModule(module) {
-            alert('Loading ' + module + ' module...\\nModule: ' + module.toUpperCase());
-            // In a real system, this would navigate to /module/name
-            // window.location.href = '/' + module;
-        }
-        
-        function loadData() {
-            // Load transactions
-            fetch('/api/transactions')
-                .then(r => r.json())
-                .then(data => {
-                    const tbody = document.getElementById('transactions-table');
-                    tbody.innerHTML = data.map(t => `
-                        <tr>
-                            <td>${t.date}</td>
-                            <td>${t.description}</td>
-                            <td>${t.amount}</td>
-                            <td>${t.type}</td>
-                        </tr>
-                    `).join('');
-                });
-        }
-        
-        // Load data on page load
-        window.onload = loadData;
-    </script>
-</body>
-</html>
-'''
+    return '''<form method="post">
+        <input type="text" name="username" placeholder="Username" required>
+        <input type="password" name="password" placeholder="Password" required>
+        <button type="submit">Login</button>
+    </form>'''
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 @app.route('/')
+@login_required
 def dashboard():
-    return render_template_string(DASHBOARD_TEMPLATE, timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    user = User.query.get(session['user_id'])
+    po_count = PurchaseOrder.query.count()
+    so_count = SalesOrder.query.count()
+    products = Product.query.count()
+    
+    html = f'''<!DOCTYPE html>
+    <html>
+    <head>
+        <title>ERP Dashboard</title>
+        <style>
+            body {{ font-family: Arial; margin: 20px; background: #f5f5f5; }}
+            .header {{ background: #667eea; color: white; padding: 20px; border-radius: 5px; margin-bottom: 20px; }}
+            .logout {{ float: right; }}
+            .cards {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin: 20px 0; }}
+            .card {{ background: white; padding: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+            .card h3 {{ color: #667eea; margin: 0; }}
+            .card .value {{ font-size: 28px; font-weight: bold; color: #333; }}
+            .nav {{ background: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
+            .nav a {{ margin-right: 15px; text-decoration: none; color: #667eea; }}
+            .nav a:hover {{ text-decoration: underline; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>🚀 ERP System v3.0</h1>
+            <p>Welcome, {session['username']} ({session['role']})</p>
+            <a href="/logout" class="logout" style="color: white; text-decoration: none;">Logout</a>
+        </div>
+        
+        <div class="nav">
+            <a href="/purchases">📦 Purchases</a>
+            <a href="/sales">🛒 Sales</a>
+            <a href="/inventory">📊 Inventory</a>
+            <a href="/accounting">💰 Accounting</a>
+            <a href="/reports">📈 Reports</a>
+            <a href="/api/status">🔗 API</a>
+        </div>
+        
+        <div class="cards">
+            <div class="card">
+                <h3>Purchase Orders</h3>
+                <div class="value">{po_count}</div>
+            </div>
+            <div class="card">
+                <h3>Sales Orders</h3>
+                <div class="value">{so_count}</div>
+            </div>
+            <div class="card">
+                <h3>Products</h3>
+                <div class="value">{products}</div>
+            </div>
+            <div class="card">
+                <h3>Version</h3>
+                <div class="value">3.0</div>
+            </div>
+        </div>
+    </body>
+    </html>'''
+    return html
 
 @app.route('/api/status')
 def api_status():
-    return jsonify({
-        'status': 'online',
-        'version': '2.0',
-        'timestamp': datetime.now().isoformat(),
-        'modules': ['Accounting', 'Inventory', 'HR', 'Sales', 'CRM', 'Reports', 'Settings'],
-        'system_health': 'healthy'
-    })
-
-@app.route('/api/transactions')
-def api_transactions():
-    return jsonify(data_store['transactions'])
-
-@app.route('/api/inventory')
-def api_inventory():
-    return jsonify(data_store['inventory'])
-
-@app.route('/api/employees')
-def api_employees():
-    return jsonify(data_store['employees'])
-
-@app.route('/api/sales')
-def api_sales():
-    return jsonify(data_store['sales'])
-
-@app.route('/api/accounting')
-def api_accounting():
-    total_income = sum(t['amount'] for t in data_store['transactions'] if t['type'] == 'income')
-    total_expense = sum(t['amount'] for t in data_store['transactions'] if t['type'] == 'expense')
-    return jsonify({
-        'total_income': total_income,
-        'total_expense': total_expense,
-        'balance': total_income - total_expense,
-        'transactions_count': len(data_store['transactions'])
-    })
-
-@app.route('/api/dashboard-stats')
-def api_dashboard_stats():
-    total_revenue = sum(t['amount'] for t in data_store['transactions'] if t['type'] == 'income')
-    inventory_count = sum(p['quantity'] for p in data_store['inventory'])
-    return jsonify({
-        'total_revenue': total_revenue,
-        'inventory_items': inventory_count,
-        'employees': len(data_store['employees']),
-        'sales': len(data_store['sales'])
-    })
+    return jsonify({{'status': 'online', 'version': '3.0', 'timestamp': datetime.utcnow().isoformat()}})
 
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
