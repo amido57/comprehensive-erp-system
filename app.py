@@ -7,7 +7,7 @@ import os
 import json
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///erp.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///erp.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')
 
